@@ -1,7 +1,7 @@
 ---
 title: "DATA606 Project"
 author: "Alexander Simon"
-date: "2024-05-12"
+date: "2024-05-13"
 toc: yes
 output:
   pdf_document: default
@@ -163,13 +163,13 @@ shallow_quakes <- quake_data %>%
 
 **Research questions (RQ)**: (1) Is there a difference in the number of earthquakes that occur at night vs during the day? (2) Is there a difference in the mean depth of shallow earthquakes that are minor, moderate, or major in magnitude? (3) Are time of day, location, depth, and magnitude significant predictors of the number of earthquakes?
 
-**Methods**: I used descriptive statistics and hypothesis tests using the difference of two proportions, analysis of variance, t-test, and Poisson regression analysis.
+**Methods**: I used descriptive statistics and null hypothesis tests using the difference of two proportions, analysis of variance, t-test, and Poisson regression analysis.
 
 **Results**: RQ #1 was the only question for which all the conditions of the hypothesis test were met. The difference of two proportions test showed that the proportions of earthquakes that occur at night vs day are significantly different (p\<0.05). The conditions for ANOVA were not fully satisfied because earthquake depths were not normally distributed and variance was not constant across groups. The conditions for Poisson regression were not met because the count data did not follow a Poisson distribution.
 
-**Conclusions**: The proportion of significant earthquakes that occur at night is not equal to the proportion that occur during the day. No valid conclusions can be made about the mean depth of shallow earthquakes or which variables are significant predictors of the number of earthquakes because the conditions for the hypothesis tests were not met.
+**Conclusions**: In the study dataset, the proportion of significant earthquakes that occur at night is not equal to the proportion that occur during the day. No valid conclusions can be made about the mean depth of shallow earthquakes or significant predictors of the number of earthquakes because the conditions for the hypothesis tests were not met.
 
-(Word count: 298 of 300 words maximum)
+(Word count: 300 of 300 words maximum)
 
 <br>
 
@@ -249,7 +249,7 @@ Continued on next page
 
 #### 3.2. Earthquake magnitude
 
-The distribution of the number of significant earthquake by magnitude is unimodal and slightly left skewed.
+The distribution of the number of significant earthquakes by magnitude is unimodal and slightly left skewed.
 
 ```{r histogram-quake-magnitude}
 ggplot(quake_data, aes(x = magnitude)) +
@@ -732,7 +732,7 @@ Although the Poisson regression model appeared to fit the count data and all pre
 
 ### 5. Discussion and overall conclusions
 
-Earthquake data are interesting but challenging to use to test hypotheses using statistical inference. I was only able to answer one of my three research questions, namely, whether there is a difference in the number of significant earthquakes that occur at night vs day. The difference in two proportions test showed a statistically significant difference. This finding contradicts the [USGS FAQ](https://www.usgs.gov/faqs/can-position-moon-or-planets-affect-seismicity-are-there-more-earthquakes-morningin-eveningat) on this topic but no supporting evidence is provided. Literature searches showed that the relationship between seismic activity and time of day is a long-standing debate; however, one recent research study that showed that shallow, high-magnitude earthquakes in Japan are more likely to occur between midnight and 6 am local time (Hao 2019). Of course, a single study is not generalizable; however, it does show that I am not the first to reach this conclusion. Finally, it should be noted that the "weak link" in the conditions for the difference of two proportions test is the assumption of independent events. This assumption is based on the magnitude-independence assumption, which is used in current earthquake models, but is still an assumption nonetheless.
+Earthquake data are interesting but challenging to use to test hypotheses using statistical inference. I was only able to answer one of my three research questions, namely, whether there is a difference in the number of significant earthquakes that occur at night vs day. The difference in two proportions test showed a statistically significant difference in the study data. This finding contradicts the [USGS FAQ](https://www.usgs.gov/faqs/can-position-moon-or-planets-affect-seismicity-are-there-more-earthquakes-morningin-eveningat) on this topic but no supporting evidence is provided on the USGS website. Literature searches showed that the relationship between seismic activity and time of day is a long-standing debate; however, one recent research study that showed that shallow, high-magnitude earthquakes in Japan are more likely to occur between midnight and 6 am local time (Hao 2019). Of course, a single study is not generalizable; however, it does show that I am not the first to reach this conclusion. Finally, it should be noted that the "weak link" in the conditions for the difference of two proportions test is the assumption of independent events. This assumption is based on the magnitude-independence assumption, which is used in current earthquake models, but is still an assumption nonetheless.
 
 I was not able to draw valid conclusions for the other two research questions because earthquake magnitude and depth were not normally distributed. In addition, earthquake count data did not follow a Poisson distribution. These issues prevented the conditions for ANOVA and Poisson regression analyses from being satisfied, and therefore, invalidate the results of the analyses that I did perform (as educational exercises).
 
