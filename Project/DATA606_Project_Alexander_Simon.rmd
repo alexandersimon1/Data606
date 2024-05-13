@@ -22,6 +22,12 @@ if (!"hexbin" %in% rownames(installed.packages())) {
 }
 library(hexbin)
 
+# Utility functions for data analysis
+if (!"Rfast" %in% rownames(installed.packages())) {
+  install.packages("Rfast")
+}
+library(Rfast)
+
 # The following packages are needed for the sunrise() and sunset() functions in time conversions
 # https://search.r-project.org/CRAN/refmans/bioRad/html/sunrise_sunset.html
 if (!"BiocManager" %in% rownames(installed.packages())) {
@@ -149,9 +155,9 @@ shallow_quakes <- quake_data %>%
 
 <br>
 
-### 1. Abstract (295 of 300 words maximum)
+### 1. Abstract
 
-**Background**: Seismic events can be described by time, location, depth, and magnitude (ie, intensity; range, 1 to 10). Earthquakes are assumed to be independent events based on the magnitude-independence assumption used in earthquake research.
+**Background**: Seismic events can be described by time, location, depth, and magnitude (ie, intensity). Earthquakes are assumed to be independent events based on the magnitude-independence assumption used in earthquake research.
 
 **Data**: I analyzed publicly available data from the United States Geological Survey (USGS) [Earthquake Catalog](https://earthquake.usgs.gov/earthquakes/search/). My dataset included 8,436 significant global earthquakes that occurred between May 10, 1900, and May 10, 2024. USGS significance is a composite score of seismic magnitude and crowd-sourced perceptions of earthquake intensity; earthquakes with scores \>600 are considered "significant".
 
@@ -159,9 +165,11 @@ shallow_quakes <- quake_data %>%
 
 **Methods**: I used descriptive statistics and hypothesis tests using the difference of two proportions, analysis of variance, t-test, and Poisson regression analysis.
 
-**Results**: RQ #1 was the only question for which all the conditions of the hypothesis test were met. The difference of two proportions test showed that the proportions of earthquakes that occur at night vs day are significantly different (p\<0.05). The conditions for ANOVA were not fully satisfied because earthquake depths were not normally distributed. The conditions for Poisson regression were not met because the count data did not follow a Poisson distribution.
+**Results**: RQ #1 was the only question for which all the conditions of the hypothesis test were met. The difference of two proportions test showed that the proportions of earthquakes that occur at night vs day are significantly different (p\<0.05). The conditions for ANOVA were not fully satisfied because earthquake depths were not normally distributed and variance was not constant across groups. The conditions for Poisson regression were not met because the count data did not follow a Poisson distribution.
 
 **Conclusions**: The proportion of significant earthquakes that occur at night is not equal to the proportion that occur during the day. No valid conclusions can be made about the mean depth of shallow earthquakes or which variables are significant predictors of the number of earthquakes because the conditions for the hypothesis tests were not met.
+
+(Word count: 298 of 300 words maximum)
 
 <br>
 
@@ -235,6 +243,10 @@ The cases are earthquakes events recorded by seismic monitoring stations around 
 nrow(quake_data)
 ```
 
+Continued on next page
+
+\newpage
+
 #### 3.2. Earthquake magnitude
 
 The distribution of the number of significant earthquake by magnitude is unimodal and slightly left skewed.
@@ -245,6 +257,8 @@ ggplot(quake_data, aes(x = magnitude)) +
   xlab("Earthquake magnitude") + ylab("Number of earthquakes") +
   theme(axis.title = element_text(face = "bold"))
 ```
+
+Continued on next page
 
 \newpage
 
@@ -271,7 +285,37 @@ quake_data %>%
   arrange(desc(n))
 ```
 
-<br>
+The mean and standard deviation magnitude is similar for earthquakes that occur at night or during the day.
+
+```{r}
+# Night
+mag_summary_night <- quake_data %>%
+  filter(time_of_day == "Night") %>%
+  summarise(
+    min = min(magnitude),
+    max = max(magnitude),
+    mean = round(mean(magnitude), 3),
+    SD = round(sd(magnitude), 3)
+  )
+
+# Day
+mag_summary_day <- quake_data %>%
+  filter(time_of_day == "Day") %>%
+  summarise(
+    min = min(magnitude),
+    max = max(magnitude),
+    mean = round(mean(magnitude), 3),
+    SD = round(sd(magnitude), 3)
+  )
+
+mag_summary <- as.data.frame(rbind(mag_summary_night, mag_summary_day))
+row.names(mag_summary) <- c("Night", "Day")
+mag_summary
+```
+
+Continued on next page
+
+\newpage
 
 #### 3.3. Earthquake depth
 
@@ -309,6 +353,36 @@ quake_data %>%
   arrange(desc(n))
 ```
 
+\newpage
+
+The mean and standard deviation depth is similar for earthquakes that occur at night or during the day.
+
+```{r}
+# Night
+depth_summary_night <- quake_data %>%
+  filter(time_of_day == "Night") %>%
+  summarise(
+    min = min(depth),
+    max = max(depth),
+    mean = round(mean(depth), 3),
+    SD = round(sd(depth), 3)
+  )
+
+# Day
+depth_summary_day <- quake_data %>%
+  filter(time_of_day == "Day") %>%
+  summarise(
+    min = min(depth),
+    max = max(depth),
+    mean = round(mean(depth), 3),
+    SD = round(sd(depth), 3)
+  )
+
+depth_summary <- as.data.frame(rbind(depth_summary_night, depth_summary_day))
+row.names(depth_summary) <- c("Night", "Day")
+depth_summary
+```
+
 <br>
 
 #### 3.4. Earthquake location
@@ -326,6 +400,8 @@ quake_data %>%
   ) %>%
   arrange(desc(n))
 ```
+
+Continued on next page
 
 \newpage
 
@@ -556,7 +632,7 @@ $H_A:$ At least one variable has a higher proportion of earthquakes.
 
 -   The dependent variable is a count variable (ie, discrete) - True (number of earthquakes)
 
--   Counts follow a Poisson distribution - This condition was not met. As shown by dispersion test, the probability of the count data being from a Poisson distribution is \<0.0005 (essentially 0).
+-   Counts follow a Poisson distribution - This condition was not met. A dispersion test shows that the count data are overdispersed (ie, observed variance is higher than the variance of a theoretical Poisson distribution).
 
 ```{r}
 # Calculate number of earthquakes for all combinations of predictor variables
@@ -566,22 +642,19 @@ quake_counts <- quake_data %>%
   summarise(
     count = n()
   )
+
+sprintf("Mean: %.3f", mean(quake_counts$count))
+sprintf("Variance: %.3f", var(quake_counts$count))
 ```
+
+In the dispersion test, p\<0.05 indicates that the Poisson model is not appropriate.[^7]
+
+[^7]: The null hypothesis is that the model is appropriate and the alternative hypothesis is that the model is not appropriate. Additional information at <https://easystats.github.io/performance/reference/check_overdispersion.html>
 
 ```{r}
 # Dispersion test
-# From https://stackoverflow.com/questions/59809960/how-do-i-know-if-my-data-fit-a-poisson-distribution-using-r
-dispersion_test <- function(x) 
-{
-  res <- 1-2 * abs((1 - pchisq((sum((x - mean(x))^2)/mean(x)), length(x) - 1))-0.5)
-
-  cat("Dispersion test of count data:\n", length(x), " data points\n",
-      "Mean: ", mean(x), "\n",
-      "Variance: ", var(x), "\n",
-      "Probability of being drawn from Poisson distribution: ", round(res, 3), "\n", sep = "")
-}
-
-dispersion_test(quake_counts$count)
+# https://rdrr.io/cran/Rfast/man/poisdisp.test.html
+poisdisp.test(quake_counts$count, alternative = "either")
 ```
 
 #### 4.3.3. Calculate
@@ -634,9 +707,9 @@ ggplot(quake_counts, aes(x = log(count), y = log(predict))) +
   theme(axis.title = element_text(face = "bold"))
 ```
 
-**Diagnostic plots** - Overall, the plots below indicate that the conditions for the Poisson regression model are not reasonable.[^7]
+**Diagnostic plots** - Overall, the plots below indicate that the conditions for the Poisson regression model are not reasonable.[^8]
 
-[^7]: Interpretations based on explanations from <https://www.andrew.cmu.edu/user/achoulde/94842/homework/regression_diagnostics.html>
+[^8]: Interpretations based on explanations from <https://www.andrew.cmu.edu/user/achoulde/94842/homework/regression_diagnostics.html>
 
 1.  **Residuals vs fitted plot** - The data points appear randomly scattered but the red line isn't flat (ie, deviates from y=0), which may indicate a nonlinear trend in the residuals.
 
