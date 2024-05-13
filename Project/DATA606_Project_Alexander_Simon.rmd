@@ -1,0 +1,694 @@
+---
+title: "DATA606 Project"
+author: "Alexander Simon"
+date: "2024-05-12"
+toc: yes
+output:
+  pdf_document: default
+---
+
+### 0. Data preparation
+
+```{r setup, echo=FALSE, results='hide', warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(dplyr.summarise.inform = FALSE)  # Suppress summarise info
+library(tidyverse)
+library(lubridate)
+
+# Hexagonal binning functions to reduce overplotting effects
+# https://cran.r-project.org/web/packages/hexbin/index.html
+if (!"hexbin" %in% rownames(installed.packages())) {
+  install.packages("hexbin")
+}
+library(hexbin)
+
+# The following packages are needed for the sunrise() and sunset() functions in time conversions
+# https://search.r-project.org/CRAN/refmans/bioRad/html/sunrise_sunset.html
+if (!"BiocManager" %in% rownames(installed.packages())) {
+  install.packages("BiocManager")
+}
+if (!"rhdf5" %in% rownames(installed.packages())) {
+  install.packages("rhdf5")
+}
+if (!"bioRad" %in% rownames(installed.packages())) {
+  install.packages("bioRad")
+}
+library(BiocManager)
+library(rhdf5)
+library(bioRad)
+```
+
+```{r load-transform-tidy-data}
+# Load data
+quake_data <- read_csv('https://raw.githubusercontent.com/alexandersimon1/Data606/main/Project/signficant_earthquakes_1900_2024.csv', show_col_types = FALSE)
+
+# Select relevant columns
+# Only keep the columns needed for analysis
+quake_data <- quake_data %>%
+  select(time_UTC = time, magnitude = mag, depth, location = place, latitude, longitude)
+
+# Tidy descriptions of earthquake location
+quake_data <- quake_data %>%
+  mutate(
+    location = str_replace_all(tolower(location), 
+                  c(".*, " = "",
+                    ".*of the " = "",
+                    ".*of " = "",
+                    " region$" = "",
+                    " earthquake.*" = "",
+                    ".*atlantic.*" = "Atlantic Ocean",
+                    ".*pacific.*" = "Pacific Ocean",
+                    ".*ridge.*" = "Ocean",
+                    "mx" = "Mexico",
+                    "fiji islands" = "Fiji",
+                    "philippine islands" = "Philippines")),
+    .after = "location"
+  )
+
+# Transform US state abbreviations to full spelling (mainly for readability)
+state_names <- c("alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+                 "connecticut", "delaware", "district of columbia", "florida", "georgia",
+                 "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky",
+                 "louisiana", "maine", "maryland", "massachusetts", "michigan", "minnesota",
+                 "mississippi", "missouri", "montana", "nebraska", "nevada", "new hampshire",
+                 "new jersey", "new mexico", "new york", "north carolina", "north dakota",
+                 "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+                 "south carolina", "south dakota", "tennessee", "texas", "utah",
+                 "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming")
+state_abbreviations <- c("AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL",
+                         "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME",
+                         "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH",
+                         "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI",
+                         "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY")
+get_state_fullname <- setNames(state_names, state_abbreviations)
+
+quake_data <- quake_data %>%
+  mutate(
+    location = if_else(location %in% tolower(state_abbreviations),
+                              str_to_title(unname(get_state_fullname[location])),
+                              str_to_title(location))
+  )
+
+# Add a column to indicate whether the earthquake location is in the "Ring of Fire"
+# https://en.wikipedia.org/wiki/Ring_of_Fire
+ring_of_fire <- c("Philippines", "Japan", "Taiwan", "Vanuatu", "Aleutian Islands", "Mariana Islands", "Kuril Islands", "Solomon Islands", "South Sandwich Islands", "Kermadec Islands", "Fiji", "Tonga", "Papua New Guinea", "Indonesia", "Banda Sea", "Molucca Sea", "Celebes Sea", "Loyalty Islands", "New Zealand", "Chile", "Peru", "Ecuador", "Panama", "Costa Rica", "Guatemala", "Nicaragua", "El Salvador", "California", "Oregon", "Washington", "Alaska")
+quake_data <- quake_data %>%
+  mutate(
+    in_ring_of_fire = location %in% ring_of_fire,
+    .after = "location"    
+  )
+
+# Add a column to indicate whether time of earthquake is at night
+# This is determined by using functions from the bioRad package to calculate local sunrise and sunset times at a specific geographic location (latitude/longitude) and then checking (true/false) whether the earthquake time is between these times (actually this determines daytime, so nighttime is the negation)
+# https://search.r-project.org/CRAN/refmans/bioRad/html/sunrise_sunset.html
+quake_data <- quake_data %>%
+  mutate(
+    sunrise = sunrise(time_UTC, lat = latitude, lon = longitude),
+    sunset = sunset(time_UTC, lat = latitude, lon = longitude),
+    time_of_day = if_else(!(time_UTC >= sunrise & time_UTC <= sunset), "Night", "Day"),
+    .after = time_UTC
+  ) %>%
+select(-sunrise, -sunset)  # no longer needed
+
+# Add a column to indicate the magnitude category
+quake_data <- quake_data %>%
+  mutate(
+    magnitude_category = case_when(
+      magnitude < 4 ~ "Minor",
+      between(magnitude, 4, 7) ~ "Moderate",
+      magnitude > 7 ~ "Major",
+      .default = NULL),
+    .after = "magnitude"
+  )
+
+# Add a column to indicate the earthquake depth category
+# Categories are based on the US Geological Survey classification of earthquake depth
+# https://www.usgs.gov/programs/earthquake-hazards/determining-depth-earthquake
+quake_data <- quake_data %>%
+  mutate(
+    depth_category = case_when(
+      depth < 70 ~ "Shallow",
+      between(depth, 70, 300) ~ "Intermediate",
+      depth > 300 ~ "Deep",
+      .default = NULL),
+    .after = "depth"
+  )
+
+# Remove rows with missing data
+quake_data <- quake_data %>%
+  drop_na()
+
+# Create a dataframe with only shallow earthquakes
+shallow_quakes <- quake_data %>%
+  filter(depth_category == "Shallow")
+```
+
+<br>
+
+[Please see Rmd file for R code]
+
+<br>
+
+### 1. Abstract (295 of 300 words maximum)
+
+**Background**: Seismic events can be described by time, location, depth, and magnitude (ie, intensity; range, 1 to 10). Earthquakes are assumed to be independent events based on the magnitude-independence assumption used in earthquake research.
+
+**Data**: I analyzed publicly available data from the United States Geological Survey (USGS) [Earthquake Catalog](https://earthquake.usgs.gov/earthquakes/search/). My dataset included 8,436 significant global earthquakes that occurred between May 10, 1900, and May 10, 2024. USGS significance is a composite score of seismic magnitude and crowd-sourced perceptions of earthquake intensity; earthquakes with scores \>600 are considered "significant".
+
+**Research questions (RQ)**: (1) Is there a difference in the number of earthquakes that occur at night vs during the day? (2) Is there a difference in the mean depth of shallow earthquakes that are minor, moderate, or major in magnitude? (3) Are time of day, location, depth, and magnitude significant predictors of the number of earthquakes?
+
+**Methods**: I used descriptive statistics and hypothesis tests using the difference of two proportions, analysis of variance, t-test, and Poisson regression analysis.
+
+**Results**: RQ #1 was the only question for which all the conditions of the hypothesis test were met. The difference of two proportions test showed that the proportions of earthquakes that occur at night vs day are significantly different (p\<0.05). The conditions for ANOVA were not fully satisfied because earthquake depths were not normally distributed. The conditions for Poisson regression were not met because the count data did not follow a Poisson distribution.
+
+**Conclusions**: The proportion of significant earthquakes that occur at night is not equal to the proportion that occur during the day. No valid conclusions can be made about the mean depth of shallow earthquakes or which variables are significant predictors of the number of earthquakes because the conditions for the hypothesis tests were not met.
+
+<br>
+
+### 2. Project overview
+
+#### 2.1. Data
+
+I obtained data from the United States Geological Survey (USGS) [Earthquake Catalog](https://earthquake.usgs.gov/earthquakes/search/), which is maintained by the [Earthquakes Hazards Program](https://www.usgs.gov/programs/earthquake-hazards). The data are collected from global, national, and regional seismic monitoring stations.
+
+I downloaded data for significant global earthquakes that occurred between May 10, 1900, and May 10, 2024, as a CSV file and saved it to my GitHub repository (<https://github.com/alexandersimon1/Data606/tree/main/Project>).
+
+<br>
+
+#### 2.2. Independence of events
+
+A key question for statistical analyses of earthquakes is whether events are independent of each other. I initially thought that the occurrence of "aftershocks" (ie, earthquakes that follow a higher-magnitude precursor event) would mean that some earthquakes are dependent events. However, literature searches showed that earthquake models generally assume that the magnitude of any earthquake is independent from previous events, which is known as the "magnitude-independence" assumption (Stallone and Marzocchi 2019). This assumption is based on statistical and probabilistic analyses of the dependence between the magnitude of and time interval between earthquakes (eg, Ferraes 1975) and has been shown to be empirically true for earthquakes across large geographic areas (Stallone and Marzocchi 2019). Since my analysis focuses on global events, I assume that this assumption holds and that earthquakes are independent events.
+
+<br>
+
+#### 2.3. Definitions
+
+According to the USGS, [earthquake significance](https://earthquake.usgs.gov/earthquakes/browse/significant.php) is determined by a composite score of the initial automated earthquake magnitude, final earthquake magnitude, and crowd-sourced ratings of perceived earthquake intensity. Earthquakes with significance values \>600 are considered "significant" events.
+
+To avoid confusion with the different meanings of "significant", hereafter I use the word "earthquake" to mean "significant earthquake" as defined by the USGS and reserve the word "significant" to mean statistical significance.
+
+<br>
+
+#### 2.3. Research questions
+
+1.  Is there a difference in the number of earthquakes that occur at night vs during the day?
+
+2.  Is there a difference in the mean depth of shallow earthquakes that are minor, moderate, or major in magnitude?
+
+3.  Are time of day, location, depth, and magnitude significant predictors of the number of earthquakes?
+
+<br>
+
+#### 2.4. Dependent variable
+
+-   Number of earthquakes (quantitative)
+
+<br>
+
+#### 2.5. Independent variables
+
+-   **Time of day** (categorical) - Day or night based on sunrise/sunset times in the time zone of the earthquake
+
+-   **Earthquake magnitude** (continuous/categorical) - The raw data variable is continuous. I also grouped the data into 3 categories: minor (\<4.0), moderate (4.0 to 7.0), or major earthquake (\>7.0)
+
+-   **Earthquake depth** (continuous/categorical) - The raw data variable is continuous. I also grouped the data into 3 categories: shallow (\<70 km), intermediate (70-300 km), or deep (\>300 km). These categories are based on the [USGS classification of earthquake depth](https://www.usgs.gov/programs/earthquake-hazards/determining-depth-earthquake).
+
+-   **Geographic location** (categorical) - In the Pacific "[Ring of Fire](https://en.wikipedia.org/wiki/Ring_of_Fire)" or not in it
+
+-   **Earthquake count** (discrete/quantitative) - Number of earthquakes
+
+<br>
+
+#### 2.6. Study type
+
+This is an observational study.
+
+<br>
+
+### 3. Exploratory data analysis
+
+#### 3.1. Cases
+
+The cases are earthquakes events recorded by seismic monitoring stations around the world. My dataset has 8,436 cases (rows).
+
+```{r echo=TRUE}
+nrow(quake_data)
+```
+
+#### 3.2. Earthquake magnitude
+
+The distribution of the number of significant earthquake by magnitude is unimodal and slightly left skewed.
+
+```{r histogram-quake-magnitude}
+ggplot(quake_data, aes(x = magnitude)) +
+  geom_histogram(binwidth = 0.1) +
+  xlab("Earthquake magnitude") + ylab("Number of earthquakes") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+\newpage
+
+**Summary statistics** - The magnitudes range from 2.7 to 9.5, with a median (IQR) of 6.5 (0.5).
+
+```{r summarize-quake-magnitude}
+quake_data %>%
+  summarise(
+    min = min(magnitude),
+    max = max(magnitude),
+    median = median(magnitude),
+    IQR = IQR(magnitude)
+  ) 
+```
+
+Most of the earthquakes in the dataset were moderate in magnitude. Minor earthquakes were the least common, which is not surprising since the dataset was limited to "significant" events. Two of the three components of the USGS formula for earthquake significance are related to magnitude, so a minor earthquake would need a relatively large value for the third component (number of people who rated the earthquake as "intense") to qualify as "significant". In addition, the last component can only be large when the earthquake occurs near populated areas, but [\~70%](https://www.usgs.gov/media/images/distribution-water-and-above-earth) of the Earth's surface is covered with water.
+
+```{r number-quakes-by-magnitude-category}
+quake_data %>%
+  group_by(magnitude_category) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))
+```
+
+<br>
+
+#### 3.3. Earthquake depth
+
+The majority of significant earthquakes are shallow, but there are a number of much deeper outliers.
+
+```{r histogram-quake-depth}
+ggplot(quake_data, aes(x = depth)) +
+  geom_boxplot() +
+  xlab("Earthquake depth (km)") +
+  theme(axis.title.x = element_text(face = "bold"))
+```
+
+**Summary statistics** - The depth of significant earthquakes ranges from less than -2.261 km to more than 675 km.[^1] The median (IQR) depth is 25 (20) km.
+
+[^1]: Earthquakes do not occur above ground; however, the errors associated with formulas that USGS uses to calculate earthquake depth can result in negative values for earthquakes that are very close to the surface. <https://www.usgs.gov/faqs/what-does-it-mean-earthquake-occurred-a-depth-0-km-how-can-earthquake-have-a-negative-depth>
+
+```{r summarize-quake-depth}
+quake_data %>%
+  summarise(
+    min = min(depth),
+    max = max(depth),
+    median = median(depth),
+    IQR = IQR(depth)
+  )
+```
+
+The majority of significant earthquakes are shallow. Intermediate and deep significant earthquakes are much less common.
+
+```{r number-quakes-by-depth-category}
+quake_data %>%
+  group_by(depth_category) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))
+```
+
+<br>
+
+#### 3.4. Earthquake location
+
+#### Countries/regions with the most significant earthquakes
+
+Most significant earthquakes occurred in Japan, Indonesia, and Papua New Guinea.
+
+```{r countries-with-most-quakes}
+quake_data %>%
+  select(location) %>%
+  group_by(location) %>%
+  summarise(
+    n = n()
+  ) %>%
+  arrange(desc(n))
+```
+
+\newpage
+
+#### 3.5. Earthquake depth vs magnitude and time of occurrence
+
+The distribution of significant earthquakes by depth and magnitude is similar for night and day. There appears to be more nighttime earthquakes (ie, by visual inspection of the number of data points), which is most noticeable for the red data points. (Note: The "points" are actually hexagons because I used hexagonal binning to help visualize overlapping data points. The color gradient indicates the number of overlapping data points within each hexagon.)
+
+```{r warning=FALSE}
+ggplot(quake_data, aes(x = magnitude, y = depth)) +
+  stat_binhex(bins = 40) + 
+  scale_fill_gradient(low = "lightblue", high = "red", limits = c(0, 500)) +
+  xlab("Magnitude") + ylab("Depth (km)") +
+  facet_wrap(~time_of_day) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+```
+
+<br>
+
+### 4. Statistical analyses
+
+#### 4.1. [Research question #1:]{.underline} Is there a difference in the number of earthquakes that occur at night vs during the day?
+
+#### **4.1.1. Hypotheses**
+
+$H_0:$ There is no difference in the proportion of significant earthquakes that occur during the night and the proportion of significant earthquakes that occur during the day (ie, $p_{night}-p_{day} = 0$).
+
+$H_A:$ The proportion of significant earthquakes that occur during the night and the proportion of significant earthquakes that occur during the day are different (ie, $p_{night} \neq p_{day}$).
+
+#### 4.1.2. Check the conditions for hypothesis test for the difference of two proportions
+
+-   **Independence**
+
+    -   Within groups - As explained in Section 2.2, researchers generally consider earthquakes to be independent events, so this condition is met.
+
+    -   Between groups - Day is independent of night, so significant earthquakes that occur during the day are independent of those that occur at night.
+
+-   **Success-failure** - The number of "successes" (nighttime earthquakes) and the number of "failures" (daytime earthquakes) is \>10, so this condition is met.
+
+#### 4.1.3. Calculate
+
+After converting the time that earthquakes occurred from universal time (UTC) to local time,[^2] there were 5,146 significant earthquakes that occurred at night and 3,290 significant earthquakes that occurred during the day.
+
+[^2]: Local sunrise and sunset times at a specific geographic location (latitude/longitude) were calculated using the `bioRad` R package and then checking whether the earthquake time is not between these times (ie, night = not day).
+
+```{r}
+day_night_quakes <- table(quake_data$time_of_day)
+day_night_quakes
+```
+
+The point estimate of the difference in the proportion of nighttime vs daytime earthquakes is approximately 0.22 (ie, the proportion of nighttime earthquakes is 22% greater than the proportion of daytime earthquakes).
+
+```{r}
+p_night <- day_night_quakes[2] / (day_night_quakes[1] + day_night_quakes[2])
+p_day <- day_night_quakes[1] / (day_night_quakes[1] + day_night_quakes[2])
+p_pooled <- p_night - p_day
+p_pooled
+```
+
+The standard error is 0.0092.
+
+```{r}
+SE <- sqrt( ((p_pooled * (1 - p_pooled)) / day_night_quakes[1]) +
+            ((p_pooled * (1 - p_pooled)) / day_night_quakes[2]) )
+SE
+```
+
+The 95% confidence interval for the difference between the number of nighttime vs daytime earthquakes is (0.2019, 0.2381). This means that we are 95% confident that the difference in the proportion of significant earthquakes that occur at night and the proportion of those that occur during the day is between 0.2019 and 0.2381.
+
+```{r}
+lower_ci <- p_pooled - 1.96 * SE
+upper_ci <- p_pooled + 1.96 * SE
+sprintf("The confidence interval is (%.4f, %.4f)", lower_ci, upper_ci)
+```
+
+Given the point estimate and standard error above, the p-value for the hypothesis test is extremely small.
+
+```{r}
+Z <- (p_pooled - 0) / SE
+p_value <- 2 * pnorm(Z, lower.tail = FALSE)
+p_value
+```
+
+#### 4.1.4. Conclude
+
+Because 0 is not within the confidence interval and the p-value is less than 0.05, the null hypothesis that there is no difference in the proportion of significant earthquakes that occur at night vs day is rejected.
+
+<br>
+
+#### 4.2. [Research question #2:]{.underline} Is there a difference in the mean depth of shallow earthquakes that are minor, moderate, or major in magnitude?
+
+#### **4.2.1. Hypotheses**
+
+$H_0:$ The mean depth of shallow earthquakes that are minor, moderate, or major in magnitude is the same across all groups (ie, $\mu_{minor} = \mu_{moderate} = \mu_{major}$).
+
+$H_A:$ At least one mean is different.
+
+#### 4.2.2. Check the conditions for analysis of variance (ANOVA)
+
+-   **Independence**
+
+    -   **Within groups** - As explained in Section 2.2, researchers generally consider earthquakes to be independent events, so this condition is met.
+
+    -   **Across groups** - Earthquakes in each magnitude category are distinct events so earthquakes in one category should be independent of those in a different category.
+
+-   **Normal distribution of data within each group** - The histograms and Q-Q plots below show that this condition is not met.
+
+    Histograms - The distribution of depths for minor earthquakes (green) is unimodal and right-skewed. The distributions for moderate and major earthquakes appear to be bimodal.
+
+    ```{r}
+    ggplot(shallow_quakes, aes(x = depth, fill = magnitude_category)) +
+      geom_histogram(binwidth = 5) +
+      xlab("Depth (km)") + ylab("Count") +
+      theme(
+        axis.title = element_text(face = "bold"),
+        legend.position = "none") +
+      facet_wrap(~factor(magnitude_category, c("Minor", "Moderate", "Major")), scales = "free_y")
+    ```
+
+    \newpage
+
+-   Q-Q plots - The plot for minor earthquakes is consistent with a right-skewed distribution. The plots for moderate and major earthquakes are consistent with a bimodal distribution.[^3]
+
+    ```{r}
+    ggplot(shallow_quakes, aes(sample = depth)) +
+      geom_qq() +
+      geom_qq_line(color = "steelblue") +
+      xlab("Theoretical quantiles") + ylab("Sample quantiles") +
+      theme(
+        axis.title = element_text(face = "bold"),
+        strip.text = element_text(face = "bold")) +
+      facet_wrap(~factor(magnitude_category, c("Minor", "Moderate", "Major")), scales = "free_y")
+    ```
+
+-   **Similar variance across groups** - The summary statistics and boxplots below show that this condition is not met. However, the variance of moderate and major earthquakes is closer to satisfying the condition than the variance of minor earthquakes.
+
+    Summary statistics - The number of earthquakes (n) is relatively large for moderate and major earthquakes but much smaller for minor earthquakes. The mean depth and variance of moderate and major earthquakes are similar whereas the mean and variance of minor earthquakes differ.
+
+    ```{r}
+    shallow_quakes %>%
+      group_by(magnitude_category) %>%
+      summarise(
+        n = n(),
+        mean_depth = round(mean(depth), 3),
+        variance = round(var(depth), 3)
+      )
+    ```
+
+    \newpage
+
+-   Boxplots - These plots show that moderate and major earthquakes have similar variance of depth but minor earthquakes have less variance. All 3 categories of earthquakes have outliers.
+
+    ```{r}
+    ggplot(shallow_quakes, 
+           aes(x = depth, fill = factor(magnitude_category, c("Minor", "Moderate", "Major")))) +
+      geom_boxplot() +
+      xlab("Depth (km)") +
+      theme(axis.title = element_text(face = "bold")) +
+      scale_fill_discrete(name = "Magnitude")
+    ```
+
+[^3]: <https://seankross.com/2016/02/29/A-Q-Q-Plot-Dissection-Kit.html>
+
+#### 4.2.3. Calculate
+
+#### 4.2.3.1. Classic ANOVA
+
+Although the conditions for ANOVA were not met, I decided to try the test to see what the result would be. $p<2 \times 10^{-16}$, which is less than 0.05, so the null hypothesis would be rejected (if the test conditions had been satisfied).
+
+```{r}
+depth_aov <- aov(depth ~ magnitude_category, data = shallow_quakes)
+summary(depth_aov)
+```
+
+#### 4.2.3.2. Welch's ANOVA
+
+I also tried Welch's ANOVA since the assumption of equal variance was not met.[^4] $p<2.2 \times 10^{-16}$ so the null hypothesis would be rejected if the normality condition had been met.
+
+[^4]: <https://statisticsbyjim.com/anova/welchs-anova-compared-to-classic-one-way-anova/>
+
+```{r}
+oneway.test(depth ~ magnitude_category, data = shallow_quakes, var.equal = FALSE)
+```
+
+#### 4.2.3.3. Post-hoc tests
+
+Additional pairwise tests are needed to determine which categories are different. To do this, I performed pairwise t-tests with Bonferroni correction for multiple tests, which multiplies uncorrected p-values by the number of comparisons.[^5]
+
+[^5]: <https://statsandr.com/blog/anova-in-r/> and R documentation for `p.adjust()`
+
+All 3 pairwise comparisons were statistically significant (again, this assumes that the conditions for ANOVA had been met in the first place).
+
+```{r}
+pairwise.t.test(shallow_quakes$depth, shallow_quakes$magnitude_category, p.adjust.method = "bonf")
+```
+
+#### 4.2.4. Conclude
+
+If the conditions for ANOVA had been met, I would reject the null hypothesis that the mean depth of shallow earthquakes that are minor, moderate, or major in magnitude is the same across all groups. Furthermore, the post-hoc tests would show that the mean depth of all 3 magnitude categories are significantly different from each other. However, since the test conditions were not satisfied, these conclusions are not valid for the data.
+
+<br>
+
+#### 4.3. [Research question #3:]{.underline} Are time of day, location, depth category, and magnitude category significant predictors of the number of earthquakes?
+
+All predictors are categorical variables:
+
+-   Time of day: night, day
+
+-   Location: in Ring of Fire, not in Ring of Fire
+
+-   Depth category: shallow, intermediate, deep
+
+-   Magnitude category: minor, moderate, major
+
+#### **4.3.1. Hypotheses**
+
+$H_0:$ The proportion of earthquakes for each independent variable is equal (ie, all variables are equiprobable).
+
+$H_A:$ At least one variable has a higher proportion of earthquakes.
+
+#### **4.3.2. Check the conditions for Poisson (log-linear) regression analysis**[^6]
+
+[^6]: <https://www.statisticshowto.com/poisson-regression/>
+
+-   Independent observations - As explained earlier, the earthquake events in the dataset are considered to be independent.
+
+-   The dependent variable is a count variable (ie, discrete) - True (number of earthquakes)
+
+-   Counts follow a Poisson distribution - This condition was not met. As shown by dispersion test, the probability of the count data being from a Poisson distribution is \<0.0005 (essentially 0).
+
+```{r}
+# Calculate number of earthquakes for all combinations of predictor variables
+# Adapted from https://bookdown.org/pingapang9/linear_models_bookdown/poisson.html
+quake_counts <- quake_data %>%
+  group_by(time_of_day, in_ring_of_fire, depth_category, magnitude_category) %>%
+  summarise(
+    count = n()
+  )
+```
+
+```{r}
+# Dispersion test
+# From https://stackoverflow.com/questions/59809960/how-do-i-know-if-my-data-fit-a-poisson-distribution-using-r
+dispersion_test <- function(x) 
+{
+  res <- 1-2 * abs((1 - pchisq((sum((x - mean(x))^2)/mean(x)), length(x) - 1))-0.5)
+
+  cat("Dispersion test of count data:\n", length(x), " data points\n",
+      "Mean: ", mean(x), "\n",
+      "Variance: ", var(x), "\n",
+      "Probability of being drawn from Poisson distribution: ", round(res, 3), "\n", sep = "")
+}
+
+dispersion_test(quake_counts$count)
+```
+
+#### 4.3.3. Calculate
+
+Create the model with count as the dependent variable plus the four categorical predictors. I didn't consider interaction effects in the model.
+
+```{r}
+poisson_model <- glm(count ~ time_of_day + in_ring_of_fire + depth_category + magnitude_category,
+                     data = quake_counts, family = poisson)
+summary(poisson_model)
+```
+
+All the predictors are significant, so none of them need to be removed. In equation form, the model is: $ln(n_{quakes}) = 2.13505 + 0.44733 \times Night + 0.57586 \times Ring\_of\_fire + 0.65933 \times Intermediate\_depth + 2.91188 \times Shallow\_depth -2.42555 \times Minor\_magnitude + 1.70269 \times Moderate\_magnitude$
+
+where *Night*, *Ring_of_fire*, *Intermediate_depth*, *Shallow_depth*, *Minor_magnitude*, and *Moderate_magnitude* are binary variables (ie, 0 or 1).
+
+The p-value for the model is extremely small (rounds to 0).
+
+```{r}
+p_value = 1 - pchisq(poisson_model[["deviance"]], df = poisson_model[["df.residual"]])
+p_value
+```
+
+\newpage
+
+The scatterplot below shows that the predicted counts are close to the actual counts.
+
+```{r}
+quake_counts <- quake_counts %>%
+  mutate(
+    is_night = if_else(time_of_day == "Night", 1, 0),
+    is_intermediate_depth = if_else(depth_category == "Intermediate", 1, 0),
+    is_shallow_depth = if_else(depth_category == "Shallow", 1, 0),
+    is_minor_magnitude = if_else(magnitude_category == "Minor", 1, 0),
+    is_moderate_magnitude = if_else(magnitude_category == "Moderate", 1, 0),
+    
+    predict = exp(2.13505 + 0.44733 * is_night + 0.57586 * in_ring_of_fire + 
+                  0.65933 * is_intermediate_depth + 2.91188 * is_shallow_depth +
+                  -2.42555 * is_minor_magnitude + 1.70269 * is_moderate_magnitude),
+    predict = round(predict, 3)
+  ) %>%
+  select(time_of_day, in_ring_of_fire, depth_category, magnitude_category,
+         count, predict)
+
+# Plot actual vs predicted counts
+ggplot(quake_counts, aes(x = log(count), y = log(predict))) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "lightgray") +
+  xlab("ln(actual count)") + ylab("ln(predicted count)") +
+  theme(axis.title = element_text(face = "bold"))
+```
+
+**Diagnostic plots** - Overall, the plots below indicate that the conditions for the Poisson regression model are not reasonable.[^7]
+
+[^7]: Interpretations based on explanations from <https://www.andrew.cmu.edu/user/achoulde/94842/homework/regression_diagnostics.html>
+
+1.  **Residuals vs fitted plot** - The data points appear randomly scattered but the red line isn't flat (ie, deviates from y=0), which may indicate a nonlinear trend in the residuals.
+
+2.  **Q-Q plot** - The residuals aren't completely on the diagonal, particularly for quantiles \> 1. The residuals that deviate do not have a concave/convex shape that is characteristic of skewness, so the distribution appears to be non-normal.
+
+3.  **Scale-location plot** - As shown by the red line, the standardized residuals are not spread randomly around a horizontal line. This suggests that the residuals do not have constant variance.
+
+4.  **Cook's distance** - Several residuals have extreme values, indicating that they would have a large influence on the regression results if they were omitted from the model
+
+    ```{r}
+    par(mfrow = c(2, 2))
+    plot(poisson_model, which = 1:4)
+    ```
+
+#### 4.3.4. Conclude
+
+Although the Poisson regression model appeared to fit the count data and all predictor variables were statistically significant, the conditions for Poisson regression were not met, so the results are not valid.
+
+<br>
+
+### 5. Discussion and overall conclusions
+
+Earthquake data are interesting but challenging to use to test hypotheses using statistical inference. I was only able to answer one of my three research questions, namely, whether there is a difference in the number of significant earthquakes that occur at night vs day. The difference in two proportions test showed a statistically significant difference. This finding contradicts the [USGS FAQ](https://www.usgs.gov/faqs/can-position-moon-or-planets-affect-seismicity-are-there-more-earthquakes-morningin-eveningat) on this topic but no supporting evidence is provided. Literature searches showed that the relationship between seismic activity and time of day is a long-standing debate; however, one recent research study that showed that shallow, high-magnitude earthquakes in Japan are more likely to occur between midnight and 6 am local time (Hao 2019). Of course, a single study is not generalizable; however, it does show that I am not the first to reach this conclusion. Finally, it should be noted that the "weak link" in the conditions for the difference of two proportions test is the assumption of independent events. This assumption is based on the magnitude-independence assumption, which is used in current earthquake models, but is still an assumption nonetheless.
+
+I was not able to draw valid conclusions for the other two research questions because earthquake magnitude and depth were not normally distributed. In addition, earthquake count data did not follow a Poisson distribution. These issues prevented the conditions for ANOVA and Poisson regression analyses from being satisfied, and therefore, invalidate the results of the analyses that I did perform (as educational exercises).
+
+In closing, this project reinforced the importance of checking the assumptions for statistical tests and was a good opportunity to practice methods taught in the DATA606 class.
+
+(Note: References are on next page.)
+
+<br>
+
+### 6. References
+
+Chouldechova, A. Regression diagnostic plots. <https://www.andrew.cmu.edu/user/achoulde/94842/homework/regression_diagnostics.html>
+
+Ferraes SG. Statistical and probabilistic dependence between magnitude and time-interval for Mexico City earthquakes. *Tellus*. 1975;27(5):529-537. <https://doi.org/10.3402/tellusa.v27i5.10180>
+
+Frost, J. Benefits of Welch's ANOVA compared to the classic one-way ANOVA. Statistics by Jim. <https://statisticsbyjim.com/anova/welchs-anova-compared-to-classic-one-way-anova/>
+
+Hao J, Zhang J, Yao Z. Evidence for diurnal periodicity of earthquakes from midnight to daybreak. *Natl Sci Rev*. 2019;6(5):1016-1023. <https://doi.org/10.1093/nsr/nwy117>
+
+Poisson regression. <https://www.statisticshowto.com/poisson-regression/>
+
+Ring of Fire. (2024, April 17). In Wikipedia. <https://en.wikipedia.org/wiki/Ring_of_Fire>
+
+Soetewey, A. (2020, October 12). ANOVA in R. Stats and R. <https://statsandr.com/blog/anova-in-r/>
+
+Stallone A, Marzocchi W. Empirical evaluation of the magnitude-independence assumption. *Geophys. J. Int*. 2019;216:820-839. <https://doi.org/10.1093/gji/ggy459>
+
+United States Geological Survey. Are there more earthquakes in the morning/in the evening/at a certain time of the month? <https://www.usgs.gov/faqs/can-position-moon-or-planets-affect-seismicity-are-there-more-earthquakes-morningin-eveningat>
+
+United States Geological Survey. Earthquake catalog. <https://earthquake.usgs.gov/earthquakes/search/>
+
+United States Geological Survey. Determining the depth of an earthquake. <https://www.usgs.gov/programs/earthquake-hazards/determining-depth-earthquake>
