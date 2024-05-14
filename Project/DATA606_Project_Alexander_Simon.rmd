@@ -732,13 +732,15 @@ Although the Poisson regression model appeared to fit the count data and all pre
 
 ### 5. Discussion and overall conclusions
 
-Earthquake data are interesting but challenging to use to test hypotheses using statistical inference. I was only able to answer one of my three research questions, namely, whether there is a difference in the number of significant earthquakes that occur at night vs day. The difference in two proportions test showed a statistically significant difference in the study data. This finding contradicts the [USGS FAQ](https://www.usgs.gov/faqs/can-position-moon-or-planets-affect-seismicity-are-there-more-earthquakes-morningin-eveningat) on this topic but no supporting evidence is provided on the USGS website. Literature searches showed that the relationship between seismic activity and time of day is a long-standing debate; however, one recent research study that showed that shallow, high-magnitude earthquakes in Japan are more likely to occur between midnight and 6 am local time (Hao 2019). Of course, a single study is not generalizable; however, it does show that I am not the first to reach this conclusion. Finally, it should be noted that the "weak link" in the conditions for the difference of two proportions test is the assumption of independent events. This assumption is based on the magnitude-independence assumption, which is used in current earthquake models, but is still an assumption nonetheless.
+Earthquake data are interesting but challenging to use to test hypotheses using statistical inference. I was only able to answer one of my three research questions, namely, whether there is a difference in the number of significant earthquakes that occur at night vs day. The difference in two proportions test showed a statistically significant difference in the study data.
+
+Surprisingly, this finding contradicts the [USGS FAQ](https://www.usgs.gov/faqs/can-position-moon-or-planets-affect-seismicity-are-there-more-earthquakes-morningin-eveningat) on this topic, but the USGS website does not provide any supporting evidence for their answer. My own literature searches showed that the relationship between seismic activity and time of day is a long-standing debate. As an example, I found a recent research study that showed that shallow, high-magnitude earthquakes in Japan are more likely to occur between midnight and 6 am local time (Hao 2019). Of course, a single study is not generalizable; however, it does show that I am not the first to reach this conclusion.
+
+Finally, it should be noted that the "weak link" in the conditions for the difference of two proportions test is the assumption of independent events. This assumption is based on the magnitude-independence assumption, which is used in current earthquake models, but is still an assumption nonetheless. Limiting my analysis to "significant" earthquakes further reduces the likelihood of including aftershocks, which tend to occur after larger precursor events, but may limit the ability to generalize my finding that more significant earthquakes occur at night to all earthquakes.
 
 I was not able to draw valid conclusions for the other two research questions because earthquake magnitude and depth were not normally distributed. In addition, earthquake count data did not follow a Poisson distribution. These issues prevented the conditions for ANOVA and Poisson regression analyses from being satisfied, and therefore, invalidate the results of the analyses that I did perform (as educational exercises).
 
 In closing, this project reinforced the importance of checking the assumptions for statistical tests and was a good opportunity to practice methods taught in the DATA606 class.
-
-(Note: References are on next page.)
 
 <br>
 
